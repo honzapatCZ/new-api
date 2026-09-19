@@ -4,8 +4,9 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
-// OpenAIModels is the internal model-list value. Its JSON representation is
-// emitted as an OpenRouter provider-monitor 2.4 document.
+// OpenAIModels is the internal model-list value. The legacy OpenAI-compatible
+// JSON remains supported for /v1/models, while the typed OpenRouter fields are
+// added for provider-monitor 2.4 metadata and dynamic expression pricing.
 type OpenAIModels struct {
 	Id                     string               `json:"id"`
 	Object                 string               `json:"object"`
@@ -18,19 +19,22 @@ type OpenAIModels struct {
 	InputModalities        any                  `json:"input_modalities,omitempty"`
 	OutputModalities       any                  `json:"output_modalities,omitempty"`
 	Pricing                any                  `json:"pricing,omitempty"`
+	SchemaVersion          string               `json:"schema_version,omitempty"`
+	InputModalitiesV2      []OpenRouterModality `json:"typed_input_modalities,omitempty"`
+	OutputModalitiesV2     []OpenRouterModality `json:"typed_output_modalities,omitempty"`
 	PricingDetails         *OpenRouterPricingDetails `json:"pricing_details,omitempty"`
 }
 
 // OpenRouterModality is a typed 2.4 input/output modality declaration.
 type OpenRouterModality struct {
-	Type               string                       `json:"type"`
-	SupportedInputs   map[string]any               `json:"supported_inputs,omitempty"`
-	SupportedParameters map[string]any              `json:"supported_parameters,omitempty"`
-	MaxLength          *OpenRouterLimit              `json:"max_length,omitempty"`
-	Streaming          *bool                        `json:"streaming,omitempty"`
-	Pricing            []OpenRouterPricingEntry      `json:"pricing,omitempty"`
-	Capacity           []OpenRouterCapacityEntry     `json:"capacity,omitempty"`
-	PassthroughParameters map[string]any            `json:"passthrough_parameters,omitempty"`
+	Type                  string                  `json:"type"`
+	SupportedInputs       map[string]any          `json:"supported_inputs,omitempty"`
+	SupportedParameters   map[string]any          `json:"supported_parameters,omitempty"`
+	MaxLength             *OpenRouterLimit        `json:"max_length,omitempty"`
+	Streaming             *bool                   `json:"streaming,omitempty"`
+	Pricing               []OpenRouterPricingEntry `json:"pricing,omitempty"`
+	Capacity              []OpenRouterCapacityEntry `json:"capacity,omitempty"`
+	PassthroughParameters map[string]any          `json:"passthrough_parameters,omitempty"`
 }
 
 type OpenRouterLimit struct {
@@ -39,11 +43,11 @@ type OpenRouterLimit struct {
 }
 
 type OpenRouterPricingEntry struct {
-	Type       string                     `json:"type"`
-	Unit       string                     `json:"unit"`
-	CostUSD    string                     `json:"cost_usd"`
+	Type       string                    `json:"type"`
+	Unit       string                    `json:"unit"`
+	CostUSD    string                    `json:"cost_usd"`
 	TTLSeconds *int64                    `json:"ttl_seconds,omitempty"`
-	Implicit   bool                       `json:"implicit,omitempty"`
+	Implicit   bool                      `json:"implicit,omitempty"`
 	Overrides  []OpenRouterPriceOverride `json:"overrides,omitempty"`
 }
 
@@ -59,14 +63,13 @@ type OpenRouterCapacityEntry struct {
 	Value int64  `json:"value"`
 }
 
-// OpenRouterPricingDetails is an additive New API field used for expressions
-// that cannot be losslessly represented by static 2.4 pricing entries. The
-// Model Gallery consumes the same expression and usage-schema information.
+// OpenRouterPricingDetails preserves expression-based billing metadata for
+// models whose real billing cannot be losslessly reduced to a flat flat cost map.
 type OpenRouterPricingDetails struct {
-	Mode       string                             `json:"mode"`
-	Expression string                             `json:"expression,omitempty"`
-	Usage      map[string]OpenRouterUsageField    `json:"usage,omitempty"`
-	Providers  []OpenRouterProviderPricingVariant `json:"providers,omitempty"`
+	Mode       string                               `json:"mode"`
+	Expression string                               `json:"expression,omitempty"`
+	Usage      map[string]OpenRouterUsageField      `json:"usage,omitempty"`
+	Providers  []OpenRouterProviderPricingVariant   `json:"providers,omitempty"`
 }
 
 type OpenRouterUsageField struct {
@@ -75,10 +78,10 @@ type OpenRouterUsageField struct {
 }
 
 type OpenRouterProviderPricingVariant struct {
-	Key        string                          `json:"key"`
-	Name       string                          `json:"name,omitempty"`
-	Mode       string                          `json:"mode,omitempty"`
-	Expression string                          `json:"expression,omitempty"`
+	Key        string                         `json:"key"`
+	Name       string                         `json:"name,omitempty"`
+	Mode       string                         `json:"mode,omitempty"`
+	Expression string                         `json:"expression,omitempty"`
 	Usage      map[string]OpenRouterUsageField `json:"usage,omitempty"`
 }
 

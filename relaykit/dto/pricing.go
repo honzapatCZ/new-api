@@ -6,9 +6,26 @@ import "github.com/QuantumNous/new-api/relaykit/types"
 type OpenAIModels struct {
 	Id                     string               `json:"id"`
 	Object                 string               `json:"object"`
-	Created                int                  `json:"created"`
+	Created                int64                `json:"created"`
 	OwnedBy                string               `json:"owned_by"`
 	SupportedEndpointTypes []types.EndpointType `json:"supported_endpoint_types"`
+	CanonicalSlug          string               `json:"canonical_slug,omitempty"`
+	Name                   string               `json:"name,omitempty"`
+	Description            string               `json:"description,omitempty"`
+	InputModalities        []string             `json:"input_modalities,omitempty"`
+	OutputModalities       []string             `json:"output_modalities,omitempty"`
+	Pricing                *OpenRouterPricing   `json:"pricing,omitempty"`
+}
+
+type OpenRouterPricing struct {
+	Prompt            string `json:"prompt"`
+	Completion        string `json:"completion"`
+	Request           string `json:"request"`
+	Image             string `json:"image"`
+	WebSearch         string `json:"web_search"`
+	InternalReasoning string `json:"internal_reasoning"`
+	InputCacheRead    string `json:"input_cache_read"`
+	InputCacheWrite   string `json:"input_cache_write"`
 }
 
 type AnthropicModel struct {

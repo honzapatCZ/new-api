@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -383,6 +384,9 @@ func TestListModelsUsesAdvancedCustomEndpointTypesFromPricingCache(t *testing.T)
 
 	ListModels(ctx, constant.ChannelTypeOpenAI)
 
+	assert.Contains(t, recorder.Body.String(), `"input_modalities":["text"]`)
+	assert.Contains(t, recorder.Body.String(), `"output_modalities":["text"]`)
+	assert.NotContains(t, recorder.Body.String(), `"architecture"`)
 	payload := decodeListModelsPayload(t, recorder)
 	require.Len(t, payload.Data, 1)
 	require.Equal(t, "gemini-3.5-flash", payload.Data[0].Id)
@@ -390,6 +394,135 @@ func TestListModelsUsesAdvancedCustomEndpointTypesFromPricingCache(t *testing.T)
 		constant.EndpointTypeOpenAI,
 		constant.EndpointTypeOpenAIResponse,
 	}, payload.Data[0].SupportedEndpointTypes)
+}
+
+func TestListModelsIncludesOpenRouterMetadataAndPricing(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	originalModelRatio := ratio_setting.ModelRatio2JSONString()
+	originalCompletionRatio := ratio_setting.CompletionRatio2JSONString()
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(originalModelRatio))
+		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(originalCompletionRatio))
+		model.InvalidatePricingCache()
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"zz-openrouter-metadata-model":1}`))
+	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"zz-openrouter-metadata-model":3}`))
+	db := setupModelListControllerTestDB(t)
+
+	require.NoError(t, db.Create(&model.Model{
+		ModelName:   "zz-openrouter-metadata-model",
+		Description: "OpenRouter metadata model",
+		Status:      1,
+		CreatedTime: 1700000000,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "zz-openrouter-metadata-model",
+		ChannelId: 1,
+		Enabled:   true,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	payload := decodeListModelsPayload(t, recorder)
+	require.Len(t, payload.Data, 1)
+	listed := payload.Data[0]
+	assert.Equal(t, "zz-openrouter-metadata-model", listed.CanonicalSlug)
+	assert.Equal(t, "zz-openrouter-metadata-model", listed.Name)
+	assert.Equal(t, "OpenRouter metadata model", listed.Description)
+	assert.Equal(t, int64(1700000000), listed.Created)
+	assert.Equal(t, []string{"text"}, listed.InputModalities)
+	assert.Equal(t, []string{"text"}, listed.OutputModalities)
+	require.NotNil(t, listed.Pricing)
+	assert.Equal(t, "0.000002", listed.Pricing.Prompt)
+	assert.Equal(t, "0.000006", listed.Pricing.Completion)
+	assert.Equal(t, "0", listed.Pricing.Request)
+	assert.Equal(t, "0", listed.Pricing.Image)
+}
+
+func TestOpenRouterPricingRepresentsConfiguredLegacyPrices(t *testing.T) {
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() { common.QuotaPerUnit = originalQuotaPerUnit })
+
+	cacheRead := 0.25
+	cacheWrite := 1.25
+	tokenPricing := openRouterPricing(model.Pricing{
+		ModelRatio:       2,
+		CompletionRatio:  4,
+		CacheRatio:       &cacheRead,
+		CreateCacheRatio: &cacheWrite,
+	})
+	require.NotNil(t, tokenPricing)
+	assert.Equal(t, "0.000004", tokenPricing.Prompt)
+	assert.Equal(t, "0.000016", tokenPricing.Completion)
+	assert.Equal(t, "0.000001", tokenPricing.InputCacheRead)
+	assert.Equal(t, "0.000005", tokenPricing.InputCacheWrite)
+	assert.Equal(t, "0", tokenPricing.Request)
+
+	requestPricing := openRouterPricing(model.Pricing{QuotaType: 1, ModelPrice: 0.02})
+	require.NotNil(t, requestPricing)
+	assert.Equal(t, "0.02", requestPricing.Request)
+	assert.Equal(t, "0", requestPricing.Prompt)
+
+	expressionPricing := openRouterPricing(model.Pricing{
+		BillingMode: "tiered_expr",
+		BillingExpr: `len <= 200000 ? tier("standard", p * 3 + c * 15 + cr * 0.3 + cc * 3.75) : tier("long", p * 6 + c * 22.5 + cr * 0.6 + cc * 7.5)`,
+	})
+	require.NotNil(t, expressionPricing)
+	assert.Equal(t, "0.000003", expressionPricing.Prompt)
+	assert.Equal(t, "0.000015", expressionPricing.Completion)
+	assert.Equal(t, "0.0000003", expressionPricing.InputCacheRead)
+	assert.Equal(t, "0.00000375", expressionPricing.InputCacheWrite)
+
+	fixedExpressionPricing := openRouterPricing(model.Pricing{
+		BillingMode: "tiered_expr",
+		BillingExpr: `tier("request", fixed(0.02))`,
+	})
+	require.NotNil(t, fixedExpressionPricing)
+	assert.Equal(t, "0.02", fixedExpressionPricing.Request)
+
+	imageExpressionPricing := openRouterPricing(model.Pricing{
+		BillingMode: "tiered_expr",
+		BillingExpr: `tier("image", fixed(0.03)) * image_count`,
+	})
+	require.NotNil(t, imageExpressionPricing)
+	assert.Equal(t, "0.03", imageExpressionPricing.Image)
+	assert.Equal(t, "0", imageExpressionPricing.Request)
+
+	assert.Nil(t, openRouterPricing(model.Pricing{
+		BillingMode:        "tiered_expr",
+		BillingExpr:        `tier("task", u("seconds") * 0.2)`,
+		BillingUsageSchema: map[string]jsplugin.UsageFieldSchema{"seconds": {Type: "number"}},
+	}))
+}
+
+func TestOpenRouterModalitiesFollowModelEndpoints(t *testing.T) {
+	tests := []struct {
+		name          string
+		endpoints     []constant.EndpointType
+		input, output []string
+	}{
+		{name: "chat", endpoints: []constant.EndpointType{constant.EndpointTypeOpenAI}, input: []string{"text"}, output: []string{"text"}},
+		{name: "images", endpoints: []constant.EndpointType{constant.EndpointTypeImageGeneration}, input: []string{"text", "image"}, output: []string{"image"}},
+		{name: "video", endpoints: []constant.EndpointType{constant.EndpointTypeOpenAIVideo}, input: []string{"text", "image"}, output: []string{"video"}},
+		{name: "embeddings", endpoints: []constant.EndpointType{constant.EndpointTypeEmbeddings}, input: []string{"text"}, output: []string{"embeddings"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input, output := openRouterModalities(test.endpoints)
+			assert.Equal(t, test.input, input)
+			assert.Equal(t, test.output, output)
+		})
+	}
 }
 
 func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {

@@ -193,7 +193,7 @@ func openRouterExpressionPrices(expression string) []dto.OpenRouterPrice {
 		if !used[definition.variable] {
 			continue
 		}
-		value, ok := openRouterExpressionTokenPrice(expression, definition.baseline, definition.priced)
+		value, ok := openRouterV24ExpressionTokenPrice(expression, definition.baseline, definition.priced)
 		if !ok {
 			return nil
 		}
@@ -260,7 +260,7 @@ func openRouterExpressionPriceAtContext(expression, variable string, contextLeng
 	default:
 		return "", false
 	}
-	return openRouterExpressionTokenPrice(expression, baseline, priced)
+	return openRouterV24ExpressionTokenPrice(expression, baseline, priced)
 }
 
 func openRouterTaskPrices(pricing model.Pricing, outputType string) ([]dto.OpenRouterPrice, []dto.OpenRouterPrice) {
@@ -390,7 +390,7 @@ func openRouterTaskUsageCombinations(schema map[string]jsplugin.UsageFieldSchema
 	return combinations
 }
 
-func openRouterExpressionTokenPrice(expression string, baseline, priced billingexpr.TokenParams) (string, bool) {
+func openRouterV24ExpressionTokenPrice(expression string, baseline, priced billingexpr.TokenParams) (string, bool) {
 	baseCost, _, baseErr := billingexpr.RunExpr(expression, baseline)
 	cost, trace, runErr := billingexpr.RunExpr(expression, priced)
 	if baseErr != nil || runErr != nil || trace.BillingUnit != billingexpr.BillingUnitToken || cost < baseCost {

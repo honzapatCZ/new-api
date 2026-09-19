@@ -73,6 +73,20 @@ type OpenRouterPriceOverride struct {
 	CostUSD string         `json:"cost_usd"`
 }
 
+// OpenRouterPricing is retained for source compatibility with the legacy flat
+// provider document while integrations migrate to the scoped 2.4 price arrays.
+// New responses use OpenRouterPrice on the modality or model that owns the SKU.
+type OpenRouterPricing struct {
+	Prompt            string `json:"prompt,omitempty"`
+	Completion        string `json:"completion,omitempty"`
+	Request           string `json:"request,omitempty"`
+	Image             string `json:"image,omitempty"`
+	WebSearch         string `json:"web_search,omitempty"`
+	InternalReasoning string `json:"internal_reasoning,omitempty"`
+	InputCacheRead    string `json:"input_cache_read,omitempty"`
+	InputCacheWrite   string `json:"input_cache_write,omitempty"`
+}
+
 type AnthropicModel struct {
 	ID          string `json:"id"`
 	CreatedAt   string `json:"created_at"`

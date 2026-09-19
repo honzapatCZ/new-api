@@ -160,22 +160,27 @@ func getPreferredModelOwners(modelNames []string, groups []string) map[string]st
 	return owners
 }
 
-func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
+func buildOpenAIModel(modelName string, ownerByModel map[string]string, pricingByModel map[string]model.Pricing) dto.OpenAIModels {
 	var oaiModel dto.OpenAIModels
 	if staticModel, ok := openAIModelsMap[modelName]; ok {
 		oaiModel = staticModel
 	} else {
-		oaiModel = dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: "custom",
-		}
+		oaiModel = dto.OpenAIModels{Id: modelName, Object: "model", Created: 1626777600, OwnedBy: "custom"}
 	}
 	if owner, ok := ownerByModel[modelName]; ok && owner != "" {
 		oaiModel.OwnedBy = owner
 	}
 	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+	oaiModel.SchemaVersion = "2.4"
+	oaiModel.Name = modelName
+	oaiModel.OpenRouter = &dto.OpenRouterMapping{Slug: modelName}
+	if pricing, ok := pricingByModel[modelName]; ok {
+		if pricing.CreatedTime > 0 {
+			oaiModel.Created = pricing.CreatedTime
+		}
+		oaiModel.Description = pricing.Description
+		oaiModel.InputModalities, oaiModel.OutputModalities, oaiModel.Pricing = openRouterModelDocument(pricing)
+	}
 	return oaiModel
 }
 
@@ -266,9 +271,13 @@ func ListModels(c *gin.Context, modelType int) {
 	if len(ownerGroups) > 0 {
 		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
 	}
+	pricingByModel := make(map[string]model.Pricing, len(userModelNames))
+	for _, pricing := range model.GetPricing() {
+		pricingByModel[pricing.ModelName] = pricing
+	}
 	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
 	for _, modelName := range userModelNames {
-		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
+		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel, pricingByModel))
 	}
 
 	switch modelType {
@@ -277,7 +286,7 @@ func ListModels(c *gin.Context, modelType int) {
 		for i, model := range userOpenAiModels {
 			useranthropicModels[i] = dto.AnthropicModel{
 				ID:          model.Id,
-				CreatedAt:   time.Unix(int64(model.Created), 0).UTC().Format(time.RFC3339),
+				CreatedAt:   time.Unix(model.Created, 0).UTC().Format(time.RFC3339),
 				DisplayName: model.Id,
 				Type:        "model",
 			}
@@ -352,7 +361,7 @@ func RetrieveModel(c *gin.Context, modelType int) {
 		case constant.ChannelTypeAnthropic:
 			c.JSON(200, dto.AnthropicModel{
 				ID:          aiModel.Id,
-				CreatedAt:   time.Unix(int64(aiModel.Created), 0).UTC().Format(time.RFC3339),
+				CreatedAt:   time.Unix(aiModel.Created, 0).UTC().Format(time.RFC3339),
 				DisplayName: aiModel.Id,
 				Type:        "model",
 			})

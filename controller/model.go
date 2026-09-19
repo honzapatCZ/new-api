@@ -3,12 +3,14 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
@@ -24,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
+	"github.com/shopspring/decimal"
 )
 
 // https://platform.openai.com/docs/api-reference/models/list
@@ -160,7 +163,7 @@ func getPreferredModelOwners(modelNames []string, groups []string) map[string]st
 	return owners
 }
 
-func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
+func buildOpenAIModel(modelName string, ownerByModel map[string]string, pricingByModel map[string]model.Pricing) dto.OpenAIModels {
 	var oaiModel dto.OpenAIModels
 	if staticModel, ok := openAIModelsMap[modelName]; ok {
 		oaiModel = staticModel
@@ -176,7 +179,131 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 		oaiModel.OwnedBy = owner
 	}
 	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+	oaiModel.CanonicalSlug = modelName
+	oaiModel.Name = modelName
+	if pricing, ok := pricingByModel[modelName]; ok {
+		if pricing.CreatedTime > 0 {
+			oaiModel.Created = pricing.CreatedTime
+		}
+		oaiModel.Description = pricing.Description
+		oaiModel.InputModalities, oaiModel.OutputModalities = openRouterModalities(pricing.SupportedEndpointTypes)
+		oaiModel.Pricing = openRouterPricing(pricing)
+	}
 	return oaiModel
+}
+
+func openRouterModalities(endpointTypes []constant.EndpointType) ([]string, []string) {
+	if len(endpointTypes) == 0 {
+		return nil, nil
+	}
+
+	inputModalities := []string{"text"}
+	outputModalities := []string{"text"}
+	if slices.Contains(endpointTypes, constant.EndpointTypeImageGeneration) {
+		inputModalities = append(inputModalities, "image")
+		outputModalities = []string{"image"}
+	} else if slices.Contains(endpointTypes, constant.EndpointTypeOpenAIVideo) {
+		inputModalities = append(inputModalities, "image")
+		outputModalities = []string{"video"}
+	} else if slices.Contains(endpointTypes, constant.EndpointTypeEmbeddings) {
+		outputModalities = []string{"embeddings"}
+	}
+
+	return inputModalities, outputModalities
+}
+
+func openRouterPricing(pricing model.Pricing) *dto.OpenRouterPricing {
+	if pricing.QuotaType == 1 {
+		return &dto.OpenRouterPricing{Prompt: "0", Completion: "0", Request: decimal.NewFromFloat(pricing.ModelPrice).String(), Image: "0", WebSearch: "0", InternalReasoning: "0", InputCacheRead: "0", InputCacheWrite: "0"}
+	}
+	if pricing.BillingMode == "tiered_expr" {
+		if len(pricing.BillingUsageSchema) > 0 || strings.TrimSpace(pricing.BillingExpr) == "" {
+			return nil
+		}
+		usedVars := billingexpr.UsedVars(pricing.BillingExpr)
+		_, baseTrace, err := billingexpr.RunExpr(pricing.BillingExpr, billingexpr.TokenParams{})
+		if err != nil {
+			return nil
+		}
+		result := &dto.OpenRouterPricing{Prompt: "0", Completion: "0", Request: "0", Image: "0", WebSearch: "0", InternalReasoning: "0", InputCacheRead: "0", InputCacheWrite: "0"}
+		if baseTrace.FixedPrice != nil && !usedVars["image_count"] {
+			result.Request = decimal.NewFromFloat(*baseTrace.FixedPrice).String()
+		}
+		if usedVars["p"] {
+			var ok bool
+			result.Prompt, ok = openRouterExpressionTokenPrice(pricing.BillingExpr, billingexpr.TokenParams{Len: 1}, billingexpr.TokenParams{P: 1, Len: 1})
+			if !ok {
+				return nil
+			}
+		}
+		if usedVars["c"] {
+			var ok bool
+			result.Completion, ok = openRouterExpressionTokenPrice(pricing.BillingExpr, billingexpr.TokenParams{}, billingexpr.TokenParams{C: 1})
+			if !ok {
+				return nil
+			}
+		}
+		if usedVars["cr"] {
+			var ok bool
+			result.InputCacheRead, ok = openRouterExpressionTokenPrice(pricing.BillingExpr, billingexpr.TokenParams{Len: 1}, billingexpr.TokenParams{CR: 1, Len: 1})
+			if !ok {
+				return nil
+			}
+		}
+		if usedVars["cc"] {
+			var ok bool
+			result.InputCacheWrite, ok = openRouterExpressionTokenPrice(pricing.BillingExpr, billingexpr.TokenParams{Len: 1}, billingexpr.TokenParams{CC: 1, Len: 1})
+			if !ok {
+				return nil
+			}
+		} else if usedVars["cc1h"] {
+			var ok bool
+			result.InputCacheWrite, ok = openRouterExpressionTokenPrice(pricing.BillingExpr, billingexpr.TokenParams{Len: 1}, billingexpr.TokenParams{CC1h: 1, Len: 1})
+			if !ok {
+				return nil
+			}
+		}
+		if usedVars["image_count"] {
+			one := 1
+			cost, _, runErr := billingexpr.RunExprWithRequest(pricing.BillingExpr, billingexpr.TokenParams{}, billingexpr.RequestInput{ImageCount: &one})
+			if runErr != nil || cost < 0 {
+				return nil
+			}
+			result.Image = decimal.NewFromFloat(cost).Div(decimal.NewFromInt(1_000_000)).String()
+		}
+		return result
+	}
+	if pricing.BillingMode != "" || common.QuotaPerUnit <= 0 {
+		return nil
+	}
+
+	promptPrice := decimal.NewFromFloat(pricing.ModelRatio).Div(decimal.NewFromFloat(common.QuotaPerUnit))
+	result := &dto.OpenRouterPricing{
+		Prompt:            promptPrice.String(),
+		Completion:        promptPrice.Mul(decimal.NewFromFloat(pricing.CompletionRatio)).String(),
+		Request:           "0",
+		Image:             "0",
+		WebSearch:         "0",
+		InternalReasoning: "0",
+		InputCacheRead:    "0",
+		InputCacheWrite:   "0",
+	}
+	if pricing.CacheRatio != nil {
+		result.InputCacheRead = promptPrice.Mul(decimal.NewFromFloat(*pricing.CacheRatio)).String()
+	}
+	if pricing.CreateCacheRatio != nil {
+		result.InputCacheWrite = promptPrice.Mul(decimal.NewFromFloat(*pricing.CreateCacheRatio)).String()
+	}
+	return result
+}
+
+func openRouterExpressionTokenPrice(expression string, baseline, priced billingexpr.TokenParams) (string, bool) {
+	baseCost, _, baseErr := billingexpr.RunExpr(expression, baseline)
+	cost, trace, runErr := billingexpr.RunExpr(expression, priced)
+	if baseErr != nil || runErr != nil || trace.BillingUnit != billingexpr.BillingUnitToken || cost < baseCost {
+		return "", false
+	}
+	return decimal.NewFromFloat(cost - baseCost).Div(decimal.NewFromInt(1_000_000)).String(), true
 }
 
 type modelListGroups struct {
@@ -266,9 +393,13 @@ func ListModels(c *gin.Context, modelType int) {
 	if len(ownerGroups) > 0 {
 		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
 	}
+	pricingByModel := make(map[string]model.Pricing, len(userModelNames))
+	for _, pricing := range model.GetPricing() {
+		pricingByModel[pricing.ModelName] = pricing
+	}
 	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
 	for _, modelName := range userModelNames {
-		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
+		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel, pricingByModel))
 	}
 
 	switch modelType {
@@ -277,7 +408,7 @@ func ListModels(c *gin.Context, modelType int) {
 		for i, model := range userOpenAiModels {
 			useranthropicModels[i] = dto.AnthropicModel{
 				ID:          model.Id,
-				CreatedAt:   time.Unix(int64(model.Created), 0).UTC().Format(time.RFC3339),
+				CreatedAt:   time.Unix(model.Created, 0).UTC().Format(time.RFC3339),
 				DisplayName: model.Id,
 				Type:        "model",
 			}
@@ -352,7 +483,7 @@ func RetrieveModel(c *gin.Context, modelType int) {
 		case constant.ChannelTypeAnthropic:
 			c.JSON(200, dto.AnthropicModel{
 				ID:          aiModel.Id,
-				CreatedAt:   time.Unix(int64(aiModel.Created), 0).UTC().Format(time.RFC3339),
+				CreatedAt:   time.Unix(aiModel.Created, 0).UTC().Format(time.RFC3339),
 				DisplayName: aiModel.Id,
 				Type:        "model",
 			})

@@ -1,40 +1,37 @@
 package dto
 
-import (
-	"github.com/QuantumNous/new-api/relaykit/types"
-)
+import "github.com/QuantumNous/new-api/relaykit/types"
 
-// OpenAIModels is the internal model-list value. The legacy OpenAI-compatible
-// JSON remains supported for /v1/models, while the typed OpenRouter fields are
-// added for provider-monitor 2.4 metadata and dynamic expression pricing.
+// OpenAIModels is the OpenRouter provider-monitor model document. The endpoint
+// intentionally emits schema 2.4 typed modalities rather than the legacy flat
+// pricing object.
 type OpenAIModels struct {
+	SchemaVersion          string               `json:"schema_version"`
 	Id                     string               `json:"id"`
-	Object                 string               `json:"object"`
+	Name                   string               `json:"name"`
 	Created                int64                `json:"created"`
-	OwnedBy                string               `json:"owned_by"`
-	SupportedEndpointTypes []types.EndpointType `json:"supported_endpoint_types"`
-	CanonicalSlug          string               `json:"canonical_slug,omitempty"`
-	Name                   string               `json:"name,omitempty"`
+	OwnedBy                string               `json:"owned_by,omitempty"`
 	Description            string               `json:"description,omitempty"`
-	InputModalities        any                  `json:"input_modalities,omitempty"`
-	OutputModalities       any                  `json:"output_modalities,omitempty"`
-	Pricing                any                  `json:"pricing,omitempty"`
-	SchemaVersion          string               `json:"schema_version,omitempty"`
-	InputModalitiesV2      []OpenRouterModality `json:"typed_input_modalities,omitempty"`
-	OutputModalitiesV2     []OpenRouterModality `json:"typed_output_modalities,omitempty"`
-	PricingDetails         *OpenRouterPricingDetails `json:"pricing_details,omitempty"`
+	SupportedEndpointTypes []types.EndpointType `json:"supported_endpoint_types,omitempty"`
+	InputModalities        []OpenRouterModality `json:"input_modalities"`
+	OutputModalities       []OpenRouterModality `json:"output_modalities"`
+	Pricing                []OpenRouterPricingEntry `json:"pricing,omitempty"`
+	Capacity               []OpenRouterCapacityEntry `json:"capacity,omitempty"`
+	PassthroughParameters  map[string]any       `json:"passthrough_parameters,omitempty"`
+	Datacenters            []OpenRouterDatacenter `json:"datacenters,omitempty"`
+	DeploymentRegion       string               `json:"deployment_region,omitempty"`
+	Compliance             *OpenRouterCompliance `json:"compliance,omitempty"`
 }
 
-// OpenRouterModality is a typed 2.4 input/output modality declaration.
 type OpenRouterModality struct {
-	Type                  string                  `json:"type"`
-	SupportedInputs       map[string]any          `json:"supported_inputs,omitempty"`
-	SupportedParameters   map[string]any          `json:"supported_parameters,omitempty"`
-	MaxLength             *OpenRouterLimit        `json:"max_length,omitempty"`
-	Streaming             *bool                   `json:"streaming,omitempty"`
-	Pricing               []OpenRouterPricingEntry `json:"pricing,omitempty"`
+	Type                  string                    `json:"type"`
+	SupportedInputs       map[string]any            `json:"supported_inputs,omitempty"`
+	SupportedParameters   map[string]any            `json:"supported_parameters,omitempty"`
+	MaxLength             *OpenRouterLimit          `json:"max_length,omitempty"`
+	Streaming             *bool                     `json:"streaming,omitempty"`
+	Pricing               []OpenRouterPricingEntry  `json:"pricing,omitempty"`
 	Capacity              []OpenRouterCapacityEntry `json:"capacity,omitempty"`
-	PassthroughParameters map[string]any          `json:"passthrough_parameters,omitempty"`
+	PassthroughParameters map[string]any            `json:"passthrough_parameters,omitempty"`
 }
 
 type OpenRouterLimit struct {
@@ -63,37 +60,14 @@ type OpenRouterCapacityEntry struct {
 	Value int64  `json:"value"`
 }
 
-// OpenRouterPricingDetails preserves expression-based billing metadata for
-// models whose real billing cannot be losslessly reduced to a flat flat cost map.
-type OpenRouterPricingDetails struct {
-	Mode       string                               `json:"mode"`
-	Expression string                               `json:"expression,omitempty"`
-	Usage      map[string]OpenRouterUsageField      `json:"usage,omitempty"`
-	Providers  []OpenRouterProviderPricingVariant   `json:"providers,omitempty"`
+type OpenRouterDatacenter struct {
+	CountryCode string `json:"country_code"`
+	Region      string `json:"region,omitempty"`
 }
 
-type OpenRouterUsageField struct {
-	Type string `json:"type,omitempty"`
-	Unit string `json:"unit,omitempty"`
-}
-
-type OpenRouterProviderPricingVariant struct {
-	Key        string                         `json:"key"`
-	Name       string                         `json:"name,omitempty"`
-	Mode       string                         `json:"mode,omitempty"`
-	Expression string                         `json:"expression,omitempty"`
-	Usage      map[string]OpenRouterUsageField `json:"usage,omitempty"`
-}
-
-type OpenRouterPricing struct {
-	Prompt            string `json:"prompt"`
-	Completion        string `json:"completion"`
-	Request           string `json:"request"`
-	Image             string `json:"image"`
-	WebSearch         string `json:"web_search"`
-	InternalReasoning string `json:"internal_reasoning"`
-	InputCacheRead    string `json:"input_cache_read"`
-	InputCacheWrite   string `json:"input_cache_write"`
+type OpenRouterCompliance struct {
+	ZDR   bool `json:"zdr"`
+	HIPAA bool `json:"hipaa"`
 }
 
 type AnthropicModel struct {

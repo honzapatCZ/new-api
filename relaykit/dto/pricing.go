@@ -2,7 +2,8 @@ package dto
 
 import "github.com/QuantumNous/new-api/relaykit/types"
 
-// 这里不好动就不动了，本来想独立出来的（
+// OpenAIModels is the common model-list representation. The additional fields
+// are compatible with OpenRouter's model metadata response.
 type OpenAIModels struct {
 	Id                     string               `json:"id"`
 	Object                 string               `json:"object"`
@@ -15,8 +16,10 @@ type OpenAIModels struct {
 	InputModalities        []string             `json:"input_modalities,omitempty"`
 	OutputModalities       []string             `json:"output_modalities,omitempty"`
 	Pricing                *OpenRouterPricing   `json:"pricing,omitempty"`
+	PricingDetails         *OpenRouterPricingDetails `json:"pricing_details,omitempty"`
 }
 
+// OpenRouterPricing follows the pricing keys exposed by OpenRouter.
 type OpenRouterPricing struct {
 	Prompt            string `json:"prompt"`
 	Completion        string `json:"completion"`
@@ -26,6 +29,28 @@ type OpenRouterPricing struct {
 	InternalReasoning string `json:"internal_reasoning"`
 	InputCacheRead    string `json:"input_cache_read"`
 	InputCacheWrite   string `json:"input_cache_write"`
+}
+
+// PricingDetails preserves New API billing information that cannot be safely
+// projected into OpenRouter's flat pricing object, such as task expressions.
+type OpenRouterPricingDetails struct {
+	Mode       string                             `json:"mode"`
+	Expression string                             `json:"expression,omitempty"`
+	Usage      map[string]OpenRouterUsageField    `json:"usage,omitempty"`
+	Providers  []OpenRouterProviderPricingVariant `json:"providers,omitempty"`
+}
+
+type OpenRouterUsageField struct {
+	Type string `json:"type,omitempty"`
+	Unit string `json:"unit,omitempty"`
+}
+
+type OpenRouterProviderPricingVariant struct {
+	Key        string                          `json:"key"`
+	Name       string                          `json:"name,omitempty"`
+	Mode       string                          `json:"mode,omitempty"`
+	Expression string                          `json:"expression,omitempty"`
+	Usage      map[string]OpenRouterUsageField `json:"usage,omitempty"`
 }
 
 type AnthropicModel struct {

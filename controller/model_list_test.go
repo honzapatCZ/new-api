@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -384,8 +385,8 @@ func TestListModelsUsesAdvancedCustomEndpointTypesFromPricingCache(t *testing.T)
 
 	ListModels(ctx, constant.ChannelTypeOpenAI)
 
-	assert.Contains(t, recorder.Body.String(), `"input_modalities":["text"]`)
-	assert.Contains(t, recorder.Body.String(), `"output_modalities":["text"]`)
+	assert.Contains(t, recorder.Body.String(), `"input_modalities":[{"type":"text"`)
+	assert.Contains(t, recorder.Body.String(), `"output_modalities":[{"type":"text"`)
 	assert.NotContains(t, recorder.Body.String(), `"architecture"`)
 	payload := decodeListModelsPayload(t, recorder)
 	require.Len(t, payload.Data, 1)
@@ -411,118 +412,107 @@ func TestListModelsIncludesOpenRouterMetadataAndPricing(t *testing.T) {
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"zz-openrouter-metadata-model":1}`))
 	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"zz-openrouter-metadata-model":3}`))
 	db := setupModelListControllerTestDB(t)
-
-	require.NoError(t, db.Create(&model.Model{
-		ModelName:   "zz-openrouter-metadata-model",
-		Description: "OpenRouter metadata model",
-		Status:      1,
-		CreatedTime: 1700000000,
-	}).Error)
-	require.NoError(t, db.Create(&model.Ability{
-		Group:     "default",
-		Model:     "zz-openrouter-metadata-model",
-		ChannelId: 1,
-		Enabled:   true,
-	}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "zz-openrouter-metadata-model", Description: "OpenRouter metadata model", Status: 1, CreatedTime: 1700000000}).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "zz-openrouter-metadata-model", ChannelId: 1, Enabled: true}).Error)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
-
 	ListModels(ctx, constant.ChannelTypeOpenAI)
 
 	payload := decodeListModelsPayload(t, recorder)
 	require.Len(t, payload.Data, 1)
 	listed := payload.Data[0]
-	assert.Equal(t, "zz-openrouter-metadata-model", listed.CanonicalSlug)
-	assert.Equal(t, "zz-openrouter-metadata-model", listed.Name)
+	assert.Equal(t, "2.4", listed.SchemaVersion)
+	assert.Equal(t, "zz-openrouter-metadata-model", listed.OpenRouter.Slug)
 	assert.Equal(t, "OpenRouter metadata model", listed.Description)
 	assert.Equal(t, int64(1700000000), listed.Created)
-	assert.Equal(t, []string{"text"}, listed.InputModalities)
-	assert.Equal(t, []string{"text"}, listed.OutputModalities)
-	require.NotNil(t, listed.Pricing)
-	assert.Equal(t, "0.000002", listed.Pricing.Prompt)
-	assert.Equal(t, "0.000006", listed.Pricing.Completion)
-	assert.Equal(t, "0", listed.Pricing.Request)
-	assert.Equal(t, "0", listed.Pricing.Image)
+	require.Len(t, listed.InputModalities, 1)
+	assert.Equal(t, "text", listed.InputModalities[0].Type)
+	require.Len(t, listed.InputModalities[0].Pricing, 1)
+	assert.Equal(t, dto.OpenRouterPrice{Type: "prompt", Unit: "token", CostUSD: "0.000002"}, listed.InputModalities[0].Pricing[0])
+	require.Len(t, listed.OutputModalities, 1)
+	assert.Equal(t, "text", listed.OutputModalities[0].Type)
+	require.Len(t, listed.OutputModalities[0].Pricing, 1)
+	assert.Equal(t, dto.OpenRouterPrice{Type: "completion", Unit: "token", CostUSD: "0.000006"}, listed.OutputModalities[0].Pricing[0])
+	assert.Empty(t, listed.Pricing, "request-scoped pricing must not contain zero-filled token prices")
 }
 
-func TestOpenRouterPricingRepresentsConfiguredLegacyPrices(t *testing.T) {
-	originalQuotaPerUnit := common.QuotaPerUnit
-	common.QuotaPerUnit = 500_000
-	t.Cleanup(func() { common.QuotaPerUnit = originalQuotaPerUnit })
-
-	cacheRead := 0.25
-	cacheWrite := 1.25
-	tokenPricing := openRouterPricing(model.Pricing{
-		ModelRatio:       2,
-		CompletionRatio:  4,
-		CacheRatio:       &cacheRead,
-		CreateCacheRatio: &cacheWrite,
-	})
-	require.NotNil(t, tokenPricing)
-	assert.Equal(t, "0.000004", tokenPricing.Prompt)
-	assert.Equal(t, "0.000016", tokenPricing.Completion)
-	assert.Equal(t, "0.000001", tokenPricing.InputCacheRead)
-	assert.Equal(t, "0.000005", tokenPricing.InputCacheWrite)
-	assert.Equal(t, "0", tokenPricing.Request)
-
-	requestPricing := openRouterPricing(model.Pricing{QuotaType: 1, ModelPrice: 0.02})
-	require.NotNil(t, requestPricing)
-	assert.Equal(t, "0.02", requestPricing.Request)
-	assert.Equal(t, "0", requestPricing.Prompt)
-
-	expressionPricing := openRouterPricing(model.Pricing{
-		BillingMode: "tiered_expr",
-		BillingExpr: `len <= 200000 ? tier("standard", p * 3 + c * 15 + cr * 0.3 + cc * 3.75) : tier("long", p * 6 + c * 22.5 + cr * 0.6 + cc * 7.5)`,
-	})
-	require.NotNil(t, expressionPricing)
-	assert.Equal(t, "0.000003", expressionPricing.Prompt)
-	assert.Equal(t, "0.000015", expressionPricing.Completion)
-	assert.Equal(t, "0.0000003", expressionPricing.InputCacheRead)
-	assert.Equal(t, "0.00000375", expressionPricing.InputCacheWrite)
-
-	fixedExpressionPricing := openRouterPricing(model.Pricing{
-		BillingMode: "tiered_expr",
-		BillingExpr: `tier("request", fixed(0.02))`,
-	})
-	require.NotNil(t, fixedExpressionPricing)
-	assert.Equal(t, "0.02", fixedExpressionPricing.Request)
-
-	imageExpressionPricing := openRouterPricing(model.Pricing{
-		BillingMode: "tiered_expr",
-		BillingExpr: `tier("image", fixed(0.03)) * image_count`,
-	})
-	require.NotNil(t, imageExpressionPricing)
-	assert.Equal(t, "0.03", imageExpressionPricing.Image)
-	assert.Equal(t, "0", imageExpressionPricing.Request)
-
-	assert.Nil(t, openRouterPricing(model.Pricing{
-		BillingMode:        "tiered_expr",
-		BillingExpr:        `tier("task", u("seconds") * 0.2)`,
-		BillingUsageSchema: map[string]jsplugin.UsageFieldSchema{"seconds": {Type: "number"}},
-	}))
-}
-
-func TestOpenRouterModalitiesFollowModelEndpoints(t *testing.T) {
-	tests := []struct {
-		name          string
-		endpoints     []constant.EndpointType
-		input, output []string
-	}{
-		{name: "chat", endpoints: []constant.EndpointType{constant.EndpointTypeOpenAI}, input: []string{"text"}, output: []string{"text"}},
-		{name: "images", endpoints: []constant.EndpointType{constant.EndpointTypeImageGeneration}, input: []string{"text", "image"}, output: []string{"image"}},
-		{name: "video", endpoints: []constant.EndpointType{constant.EndpointTypeOpenAIVideo}, input: []string{"text", "image"}, output: []string{"video"}},
-		{name: "embeddings", endpoints: []constant.EndpointType{constant.EndpointTypeEmbeddings}, input: []string{"text"}, output: []string{"embeddings"}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			input, output := openRouterModalities(test.endpoints)
-			assert.Equal(t, test.input, input)
-			assert.Equal(t, test.output, output)
+func TestOpenRouterModelDocumentProjectsExpressionAndTaskPricing(t *testing.T) {
+	t.Run("token expression scopes prices and cache TTLs", func(t *testing.T) {
+		inputs, outputs, root := openRouterModelDocument(model.Pricing{
+			ModelName:              "claude-test",
+			SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
+			BillingMode:            "tiered_expr",
+			BillingExpr:            `tier("base", p * 3 + c * 15 + cr * 0.3 + cc * 3.75 + cc1h * 6 + img * 2 + ai * 4 + ao * 8)`,
 		})
-	}
+		require.Len(t, inputs, 3)
+		assert.Equal(t, "text", inputs[0].Type)
+		assert.Equal(t, []dto.OpenRouterPrice{
+			{Type: "prompt", Unit: "token", CostUSD: "0.000003"},
+			{Type: "cached_prompt", Unit: "token", CostUSD: "0.0000003"},
+			{Type: "cache_write", Unit: "token", CostUSD: "0.00000375", TTLSeconds: lo.ToPtr(300)},
+			{Type: "cache_write", Unit: "token", CostUSD: "0.000006", TTLSeconds: lo.ToPtr(3600)},
+		}, inputs[0].Pricing)
+		assert.Equal(t, "image", inputs[1].Type)
+		assert.Equal(t, "audio", inputs[2].Type)
+		require.Len(t, outputs, 2)
+		assert.Equal(t, "text", outputs[0].Type)
+		assert.Equal(t, []dto.OpenRouterPrice{{Type: "completion", Unit: "token", CostUSD: "0.000015"}}, outputs[0].Pricing)
+		assert.Equal(t, "audio", outputs[1].Type)
+		assert.Equal(t, []dto.OpenRouterPrice{{Type: "completion", Unit: "token", CostUSD: "0.000008"}}, outputs[1].Pricing)
+		assert.Empty(t, root)
+	})
+
+	t.Run("video task schema becomes typed parameters and second pricing", func(t *testing.T) {
+		inputs, outputs, root := openRouterModelDocument(model.Pricing{
+			ModelName:              "video-task",
+			SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAIVideo},
+			BillingMode:            "tiered_expr",
+			BillingExpr:            `u("quality") == "pro" ? tier("pro", u("seconds") * 0.8) : tier("base", u("seconds") * 0.4)`,
+			BillingUsageSchema: map[string]jsplugin.UsageFieldSchema{
+				"seconds": {Type: "number", Unit: "second"},
+				"quality": {Enum: []string{"standard", "pro"}},
+			},
+		})
+		require.Len(t, inputs, 2)
+		require.Len(t, outputs, 1)
+		assert.Equal(t, "video", outputs[0].Type)
+		assert.Equal(t, dto.OpenRouterCapability{Type: "enum", Values: []any{"standard", "pro"}}, outputs[0].SupportedParameters["quality"])
+		assert.Equal(t, dto.OpenRouterCapability{Type: "integer", Min: lo.ToPtr(float64(0)), Max: lo.ToPtr(float64(3600)), Unit: "second"}, outputs[0].SupportedParameters["seconds"])
+		require.Len(t, outputs[0].Pricing, 1)
+		assert.Equal(t, dto.OpenRouterPrice{
+			Type: "completion", Unit: "second", CostUSD: "0.4",
+			Overrides: []dto.OpenRouterPriceOverride{{When: map[string]any{"quality": map[string]any{"equals": "pro"}}, CostUSD: "0.8"}},
+		}, outputs[0].Pricing[0])
+		assert.Empty(t, root)
+	})
+
+	t.Run("fixed image expression is output-scoped and not zero stuffed", func(t *testing.T) {
+		_, outputs, root := openRouterModelDocument(model.Pricing{
+			ModelName:              "image-task",
+			SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeImageGeneration},
+			BillingMode:            "tiered_expr",
+			BillingExpr:            `tier("image", fixed(0.03)) * image_count`,
+		})
+		require.Len(t, outputs, 1)
+		assert.Equal(t, []dto.OpenRouterPrice{{Type: "completion", Unit: "image", CostUSD: "0.03"}}, outputs[0].Pricing)
+		assert.Empty(t, root)
+	})
+
+	t.Run("long context expression becomes ordered price overrides", func(t *testing.T) {
+		prices := openRouterExpressionPrices(`len <= 200000 ? tier("standard", p * 3 + c * 15) : tier("long", p * 6 + c * 22.5)`)
+		require.Len(t, prices, 2)
+		assert.Equal(t, dto.OpenRouterPrice{
+			Type: "prompt", Unit: "token", CostUSD: "0.000003",
+			Overrides: []dto.OpenRouterPriceOverride{{When: map[string]any{"prompt_tokens": map[string]any{"gte": int64(200001)}}, CostUSD: "0.000006"}},
+		}, prices[0])
+		assert.Equal(t, dto.OpenRouterPrice{
+			Type: "completion", Unit: "token", CostUSD: "0.000015",
+			Overrides: []dto.OpenRouterPriceOverride{{When: map[string]any{"prompt_tokens": map[string]any{"gte": int64(200001)}}, CostUSD: "0.0000225"}},
+		}, prices[1])
+	})
 }
 
 func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {

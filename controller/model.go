@@ -168,26 +168,21 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string, pricingB
 	if staticModel, ok := openAIModelsMap[modelName]; ok {
 		oaiModel = staticModel
 	} else {
-		oaiModel = dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: "custom",
-		}
+		oaiModel = dto.OpenAIModels{Id: modelName, Object: "model", Created: 1626777600, OwnedBy: "custom"}
 	}
 	if owner, ok := ownerByModel[modelName]; ok && owner != "" {
 		oaiModel.OwnedBy = owner
 	}
 	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
-	oaiModel.CanonicalSlug = modelName
+	oaiModel.SchemaVersion = "2.4"
 	oaiModel.Name = modelName
+	oaiModel.OpenRouter = &dto.OpenRouterMapping{Slug: modelName}
 	if pricing, ok := pricingByModel[modelName]; ok {
 		if pricing.CreatedTime > 0 {
 			oaiModel.Created = pricing.CreatedTime
 		}
 		oaiModel.Description = pricing.Description
-		oaiModel.InputModalities, oaiModel.OutputModalities = openRouterModalities(pricing.SupportedEndpointTypes)
-		oaiModel.Pricing = openRouterPricing(pricing)
+		oaiModel.InputModalities, oaiModel.OutputModalities, oaiModel.Pricing = openRouterModelDocument(pricing)
 	}
 	return oaiModel
 }

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { CherryStudio } from '@lobehub/icons'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, BookOpen } from 'lucide-react'
+import { ArrowRight, BookOpen, Leaf, MapPin, ShieldCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -81,15 +81,15 @@ export function Hero(props: HeroProps) {
 
   return (
     <section className='relative z-10 overflow-hidden px-6 pt-24 pb-16 md:pt-32 md:pb-24 lg:pt-36 lg:pb-28'>
-      {/* Radial gradient background */}
+      {/* Brand gradient background */}
       <div
         aria-hidden
         className='pointer-events-none absolute inset-0 -z-10 opacity-25 dark:opacity-[0.12]'
         style={{
           background: [
-            'radial-gradient(ellipse 60% 50% at 20% 20%, oklch(0.72 0.18 250 / 80%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 50% 40% at 80% 15%, oklch(0.65 0.15 200 / 60%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 40% 35% at 40% 80%, oklch(0.70 0.12 280 / 40%) 0%, transparent 70%)',
+            'radial-gradient(ellipse 60% 50% at 20% 20%, oklch(0.79 0.2 135 / 72%) 0%, transparent 70%)',
+            'radial-gradient(ellipse 50% 40% at 80% 15%, oklch(0.73 0.16 165 / 55%) 0%, transparent 70%)',
+            'radial-gradient(ellipse 40% 35% at 40% 80%, oklch(0.82 0.16 95 / 34%) 0%, transparent 70%)',
           ].join(', '),
         }}
       />
@@ -104,24 +104,25 @@ export function Hero(props: HeroProps) {
         <div className='flex flex-col items-start text-left lg:col-span-6'>
           {/* Top Pill Badge */}
           <div
-            className='landing-animate-fade-up mb-5 inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/5 px-3 py-1.5 text-[11px] font-medium text-blue-600 opacity-0 shadow-xs dark:border-blue-400/20 dark:bg-blue-400/5 dark:text-blue-400'
+            className='landing-animate-fade-up border-primary/25 bg-primary/8 text-primary mb-5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium opacity-0 shadow-xs'
             style={{ animationDelay: '0ms' }}
           >
             <span className='relative flex size-1.5'>
-              <span className='absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75' />
-              <span className='relative inline-flex size-1.5 rounded-full bg-blue-500 dark:bg-blue-400' />
+              <span className='bg-primary absolute inline-flex h-full w-full animate-ping rounded-full opacity-75' />
+              <span className='bg-primary relative inline-flex size-1.5 rounded-full' />
             </span>
-            <span>{t('AI Application Infrastructure Foundation')}</span>
+            <span>{t('European AI infrastructure by game developers')}</span>
           </div>
 
           <h1
             className='landing-animate-fade-up text-[clamp(2.25rem,4.5vw,3.25rem)] leading-[1.15] font-bold tracking-tight'
             style={{ animationDelay: '60ms' }}
           >
-            {t('Unified API Gateway for')}
+            {t('Meet')}{' '}
+            <span className='text-primary'>Nejcraft AI</span>
             <br />
-            <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
-              {t('Vast Range of AI Models')}
+            <span className='bg-gradient-to-r from-lime-500 via-emerald-500 to-teal-500 bg-clip-text text-transparent'>
+              {t('Idle GPUs, put to good use')}
             </span>
           </h1>
           <p
@@ -129,9 +130,29 @@ export function Hero(props: HeroProps) {
             style={{ animationDelay: '120ms' }}
           >
             {t(
-              'Access a vast selection of models via a standard, unified API protocol. Power AI applications, manage digital assets, and connect the Future.'
+              'We are game developers with powerful GPUs that should not sit idle. Nejcraft AI puts that compute to work with affordable, EU-hosted AI and zero-retention privacy.'
             )}
           </p>
+
+          <ul
+            className='landing-animate-fade-up mt-6 flex flex-wrap gap-2 opacity-0'
+            style={{ animationDelay: '150ms' }}
+            aria-label={t('Why Nejcraft AI')}
+          >
+            {[
+              { icon: MapPin, label: t('Hosted in the EU') },
+              { icon: ShieldCheck, label: t('Zero-retention privacy') },
+              { icon: Leaf, label: t('Existing GPUs, better utilized') },
+            ].map((item) => (
+              <li
+                key={item.label}
+                className='border-primary/15 bg-background/65 text-foreground/75 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs shadow-xs backdrop-blur-sm'
+              >
+                <item.icon className='text-primary size-3.5' aria-hidden='true' />
+                {item.label}
+              </li>
+            ))}
+          </ul>
 
           <div
             className='landing-animate-fade-up mt-8 flex flex-wrap items-center gap-3 opacity-0'
@@ -169,7 +190,7 @@ export function Hero(props: HeroProps) {
             )}
           </div>
 
-          {/* Supported Apps (参考图二样式，进行卡片化和信息扩充设计，增加视觉高度) */}
+          {/* Supported Apps */}
           <div
             className='landing-animate-fade-up mt-10 w-full max-w-xl opacity-0'
             style={{ animationDelay: '240ms' }}
